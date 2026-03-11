@@ -1,52 +1,66 @@
 """
-world:// hamming a-z probe
+world:// hamming a-z probe — binary (5-bit) and true trits (3-trit)
 
 Explores the Hamming geometry of the 26 lowercase letters (a-z)
-by treating each letter as its ASCII binary codeword and computing:
+under two encodings:
 
-  1. Binary representations (5-bit, since a-z spans 0..25)
+  Binary: 5 bits  (2^5 = 32 ≥ 26)
+  Ternary: 3 trits (3^3 = 27 ≥ 26), values {0, 1, 2}
+
+For each encoding:
+  1. Codeword representations
   2. Pairwise Hamming distances
   3. Row sums — total Hamming distance from each letter to all others
-  4. Column/any sums — sums over arbitrary subsets
+  4. Subset sums — sums over selected subgroups
+  5. Per-position variation analysis
 
-This connects to neural geometry through the lens of discrete
-metric spaces, error-correcting codes, and binary neural codes.
+Comparing bit vs trit geometries reveals how the choice of radix
+reshapes the metric space: trits pack letters into fewer positions
+(3 vs 5) but with a denser alphabet per position (3 vs 2).
 """
 
 import itertools
+from collections import Counter
 
 
-def letter_to_bits(ch: str, width: int = 5) -> tuple[int, ...]:
-    """Map a lowercase letter to its binary tuple (0-indexed: a=0, b=1, ..., z=25)."""
-    val = ord(ch) - ord('a')
-    return tuple((val >> (width - 1 - i)) & 1 for i in range(width))
+def to_digits(val: int, base: int, width: int) -> tuple[int, ...]:
+    """Convert val to a fixed-width tuple of digits in the given base."""
+    digits = []
+    for _ in range(width):
+        digits.append(val % base)
+        val //= base
+    return tuple(reversed(digits))
 
 
 def hamming(a: tuple[int, ...], b: tuple[int, ...]) -> int:
-    """Hamming distance between two binary tuples."""
+    """Hamming distance between two symbol tuples."""
     return sum(x != y for x, y in zip(a, b))
 
 
-def main():
-    letters = [chr(ord('a') + i) for i in range(26)]
-    bits = {ch: letter_to_bits(ch) for ch in letters}
+def analyze_encoding(letters, codes, name, base, width):
+    """Run full Hamming analysis for a given encoding."""
+    n = len(letters)
 
-    # --- Binary representations ---
-    print("=== world:// hamming a-z ===\n")
-    print("Letter  Index  Binary(5-bit)")
-    print("-" * 32)
+    print(f"\n{'='*60}")
+    print(f"  world:// hamming a-z — {name}")
+    print(f"  base={base}  width={width}  capacity={base**width}  used=26")
+    print(f"{'='*60}\n")
+
+    # --- Codewords ---
+    print(f"Letter  Index  {name}({width}-{'trit' if base==3 else 'bit'})")
+    print("-" * 36)
     for ch in letters:
         idx = ord(ch) - ord('a')
-        print(f"  {ch}       {idx:2d}     {''.join(str(b) for b in bits[ch])}")
+        cw = ''.join(str(d) for d in codes[ch])
+        print(f"  {ch}       {idx:2d}     {cw}")
 
-    # --- Pairwise Hamming distance matrix ---
-    n = len(letters)
+    # --- Distance matrix ---
     dist = [[0] * n for _ in range(n)]
     for i in range(n):
         for j in range(n):
-            dist[i][j] = hamming(bits[letters[i]], bits[letters[j]])
+            dist[i][j] = hamming(codes[letters[i]], codes[letters[j]])
 
-    print("\n=== Pairwise Hamming Distance Matrix (26x26) ===\n")
+    print(f"\n--- Pairwise Hamming Distance Matrix ({name}) ---\n")
     header = "    " + " ".join(f"{ch}" for ch in letters)
     print(header)
     print("    " + "--" * n)
@@ -54,23 +68,35 @@ def main():
         row = " ".join(f"{dist[i][j]}" for j in range(n))
         print(f" {ch}  {row}")
 
-    # --- Row sums: total Hamming distance from each letter to all others ---
-    print("\n=== Row Sums (total distance from each letter to all others) ===\n")
+    # --- Row sums ---
+    print(f"\n--- Row Sums ({name}) ---\n")
     row_sums = {}
     for i, ch in enumerate(letters):
-        s = sum(dist[i][j] for j in range(n))
-        row_sums[ch] = s
+        row_sums[ch] = sum(dist[i][j] for j in range(n))
     for ch in letters:
         bar = "#" * (row_sums[ch] // 2)
         print(f"  {ch}: {row_sums[ch]:3d}  {bar}")
 
-    print(f"\n  Grand total (sum of all pairwise distances): {sum(row_sums.values()) // 2}")
-    print(f"  Mean pairwise distance: {sum(row_sums.values()) / (n * (n - 1)):.4f}")
+    grand = sum(row_sums.values()) // 2
+    mean = sum(row_sums.values()) / (n * (n - 1))
+    print(f"\n  Grand total pairwise distance: {grand}")
+    print(f"  Mean pairwise distance: {mean:.4f}")
+    print(f"  Max possible per pair: {width}  "
+          f"  Density: {mean/width:.4f}")
 
-    # --- Sums over subsets ("sums only of any of them") ---
-    print("\n=== Subset Hamming Sums (sums of distances within selected subsets) ===\n")
+    # --- Distance distribution ---
+    print(f"\n--- Distance Distribution ({name}) ---\n")
+    all_dists = [dist[i][j] for i in range(n) for j in range(i+1, n)]
+    dist_counts = Counter(all_dists)
+    for d in range(width + 1):
+        c = dist_counts.get(d, 0)
+        pct = 100 * c / len(all_dists)
+        bar = "#" * int(pct / 2)
+        print(f"  d={d}: {c:4d} pairs ({pct:5.1f}%)  {bar}")
 
-    interesting_subsets = {
+    # --- Subset sums ---
+    print(f"\n--- Subset Sums ({name}) ---\n")
+    subsets = {
         "vowels":       ['a', 'e', 'i', 'o', 'u'],
         "first-5":      ['a', 'b', 'c', 'd', 'e'],
         "last-5":       ['v', 'w', 'x', 'y', 'z'],
@@ -78,8 +104,7 @@ def main():
         "powers-of-2":  [chr(ord('a') + p) for p in [1, 2, 4, 8, 16]],
         "fibonacci":    [chr(ord('a') + f) for f in [1, 1, 2, 3, 5, 8, 13, 21]],
     }
-
-    for name, subset in interesting_subsets.items():
+    for sname, subset in subsets.items():
         unique = sorted(set(subset))
         total = 0
         count = 0
@@ -87,28 +112,96 @@ def main():
             ia, ib = ord(a) - ord('a'), ord(b) - ord('a')
             total += dist[ia][ib]
             count += 1
-        print(f"  {name:14s}  letters={','.join(unique):20s}  "
+        print(f"  {sname:14s}  letters={','.join(unique):20s}  "
               f"pairs={count:3d}  sum={total:4d}  "
               f"mean={total/max(count,1):.3f}")
 
-    # --- Per-bit statistics ---
-    print("\n=== Per-Bit Analysis (which bit positions carry the most variation) ===\n")
-    for bit_pos in range(5):
-        ones = sum(bits[ch][bit_pos] for ch in letters)
-        zeros = 26 - ones
-        contribution = ones * zeros  # number of pairs differing at this bit
-        print(f"  Bit {bit_pos} (2^{4-bit_pos}={1<<(4-bit_pos):2d}):  "
-              f"zeros={zeros:2d}  ones={ones:2d}  "
-              f"pairs differing={contribution:3d}")
+    # --- Per-position analysis ---
+    print(f"\n--- Per-Position Analysis ({name}) ---\n")
+    for pos in range(width):
+        vals = [codes[ch][pos] for ch in letters]
+        val_counts = Counter(vals)
+        # pairs differing at this position = total_pairs - pairs_same
+        pairs_same = sum(c * (c - 1) // 2 for c in val_counts.values())
+        pairs_diff = n * (n - 1) // 2 - pairs_same
+        dist_str = " ".join(f"{s}:{val_counts.get(s,0):2d}" for s in range(base))
+        print(f"  Pos {pos} ({base}^{width-1-pos}={base**(width-1-pos):2d}):  "
+              f"[{dist_str}]  pairs differing={pairs_diff:3d}")
 
-    total_pairs_differing = sum(
-        bits[letters[i]][bp] != bits[letters[j]][bp]
+    total_pos_diff = sum(
+        codes[letters[i]][p] != codes[letters[j]][p]
         for i in range(n) for j in range(i+1, n)
-        for bp in range(5)
+        for p in range(width)
     )
-    print(f"\n  Total bit-disagreements across all pairs: {total_pairs_differing}")
-    print(f"  (This equals the grand total of pairwise Hamming distances: "
-          f"{sum(row_sums.values()) // 2})")
+    print(f"\n  Total position-disagreements: {total_pos_diff}")
+    print(f"  (Equals grand total pairwise Hamming: {grand})")
+
+    return dist, row_sums, grand, mean
+
+
+def compare(binary_stats, ternary_stats):
+    """Compare binary vs ternary Hamming geometries."""
+    _, b_sums, b_grand, b_mean = binary_stats
+    _, t_sums, t_grand, t_mean = ternary_stats
+    letters = sorted(b_sums.keys())
+
+    print(f"\n{'='*60}")
+    print(f"  COMPARISON: Binary (5-bit) vs True Trits (3-trit)")
+    print(f"{'='*60}\n")
+
+    print(f"  {'Metric':<35s} {'Binary':>8s} {'Ternary':>8s} {'Ratio':>8s}")
+    print(f"  {'-'*35} {'-'*8} {'-'*8} {'-'*8}")
+    print(f"  {'Positions per codeword':<35s} {'5':>8s} {'3':>8s} {'0.60':>8s}")
+    print(f"  {'Symbols per position':<35s} {'2':>8s} {'3':>8s} {'1.50':>8s}")
+    print(f"  {'Codespace capacity':<35s} {'32':>8s} {'27':>8s} {'0.84':>8s}")
+    print(f"  {'Unused codewords':<35s} {'6':>8s} {'1':>8s} {'0.17':>8s}")
+    print(f"  {'Grand total pairwise distance':<35s} {b_grand:>8d} {t_grand:>8d} "
+          f"{t_grand/b_grand:>8.4f}")
+    print(f"  {'Mean pairwise distance':<35s} {b_mean:>8.4f} {t_mean:>8.4f} "
+          f"{t_mean/b_mean:>8.4f}")
+    print(f"  {'Mean / max (density)':<35s} {b_mean/5:>8.4f} {t_mean/3:>8.4f} "
+          f"{(t_mean/3)/(b_mean/5):>8.4f}")
+
+    # Per-letter comparison
+    print(f"\n--- Per-Letter Row Sums: Binary vs Ternary ---\n")
+    print(f"  Letter  Binary  Ternary  Diff")
+    print(f"  {'-'*6}  {'-'*6}  {'-'*7}  {'-'*4}")
+    for ch in letters:
+        diff = t_sums[ch] - b_sums[ch]
+        sign = "+" if diff > 0 else " " if diff == 0 else ""
+        print(f"    {ch}      {b_sums[ch]:4d}    {t_sums[ch]:5d}   {sign}{diff}")
+
+    # Rank correlation
+    b_ranked = sorted(letters, key=lambda c: b_sums[c])
+    t_ranked = sorted(letters, key=lambda c: t_sums[c])
+    b_rank = {ch: i for i, ch in enumerate(b_ranked)}
+    t_rank = {ch: i for i, ch in enumerate(t_ranked)}
+    n = len(letters)
+    d_sq = sum((b_rank[ch] - t_rank[ch]) ** 2 for ch in letters)
+    spearman = 1 - 6 * d_sq / (n * (n * n - 1))
+    print(f"\n  Spearman rank correlation of row sums: {spearman:.4f}")
+
+    # Which letters change rank the most?
+    rank_shifts = [(ch, abs(b_rank[ch] - t_rank[ch])) for ch in letters]
+    rank_shifts.sort(key=lambda x: -x[1])
+    print(f"\n  Largest rank shifts (binary→ternary):")
+    for ch, shift in rank_shifts[:5]:
+        print(f"    {ch}: rank {b_rank[ch]:2d} → {t_rank[ch]:2d}  (shift={shift})")
+
+
+def main():
+    letters = [chr(ord('a') + i) for i in range(26)]
+
+    # Binary: 5 bits
+    bits = {ch: to_digits(ord(ch) - ord('a'), 2, 5) for ch in letters}
+    binary_stats = analyze_encoding(letters, bits, "Binary", 2, 5)
+
+    # True Trits: 3 trits
+    trits = {ch: to_digits(ord(ch) - ord('a'), 3, 3) for ch in letters}
+    ternary_stats = analyze_encoding(letters, trits, "True Trits", 3, 3)
+
+    # Comparison
+    compare(binary_stats, ternary_stats)
 
 
 if __name__ == "__main__":

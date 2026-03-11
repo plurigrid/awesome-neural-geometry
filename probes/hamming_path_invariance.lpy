@@ -1,0 +1,207 @@
+;;; world:// hamming a-z — path invariance probe (basilisp)
+;;;
+;;; Path invariance: does the total Hamming distance along a path
+;;; through letter-space depend on the route taken?
+;;;
+;;; Triangle inequality, greedy vs natural ordering, palindromic
+;;; path invariance. Binary (5-bit) vs True Trits (3-trit).
+
+(ns hamming-path-invariance)
+
+;; --- encoding ---
+
+(def ord-a (builtins/ord "a"))
+
+(defn letter-index [ch]
+  (- (builtins/ord (builtins/str ch)) ord-a))
+
+(defn index-letter [i]
+  (builtins/chr (+ ord-a i)))
+
+(defn to-digits [val base width]
+  (let [b base]
+    (loop [v val w width acc []]
+      (if (zero? w)
+        acc
+        (recur (quot v b) (dec w) (into [(mod v b)] acc))))))
+
+(defn binary-code [ch]  (to-digits (letter-index ch) 2 5))
+(defn ternary-code [ch] (to-digits (letter-index ch) 3 3))
+
+;; --- hamming ---
+
+(defn hamming [a b]
+  (count (filter identity (map not= a b))))
+
+;; --- letters ---
+
+(def letters (mapv index-letter (range 26)))
+
+(def binary-codes  (into {} (map (fn [ch] [ch (binary-code ch)]) letters)))
+(def ternary-codes (into {} (map (fn [ch] [ch (ternary-code ch)]) letters)))
+
+(defn make-dist-fn [codes]
+  (fn [a b] (hamming (get codes a) (get codes b))))
+
+;; --- path cost ---
+
+(defn path-cost [dfn path]
+  (if (< (count path) 2)
+    0
+    (reduce + 0 (map (fn [pair] (dfn (first pair) (second pair)))
+                      (partition 2 1 path)))))
+
+;; --- triangle inequality ---
+
+(defn triangle-slack [dfn a b c]
+  (- (+ (dfn a b) (dfn b c)) (dfn a c)))
+
+;; --- greedy nearest-neighbor ---
+
+(defn greedy-path [dfn start ltrs]
+  (loop [cur start
+         remaining (disj (set ltrs) start)
+         path [start]]
+    (if (empty? remaining)
+      path
+      (let [nearest (apply min-key (fn [x] (dfn cur x)) (vec remaining))]
+        (recur nearest (disj remaining nearest) (conj path nearest))))))
+
+;; --- analysis ---
+
+(defn analyze-subset [dfn label sname subset]
+  (let [n       (count subset)
+        nat-c   (path-cost dfn subset)
+        rev-c   (path-cost dfn (vec (reverse subset)))
+        gr-a    (greedy-path dfn (first subset) subset)
+        gr-a-c  (path-cost dfn gr-a)
+        gr-z    (greedy-path dfn (last subset) subset)
+        gr-z-c  (path-cost dfn gr-z)
+        pairs-s (reduce + 0
+                  (for [i (range n) j (range (inc i) n)]
+                    (dfn (nth subset i) (nth subset j))))]
+    {:name    (str label "/" sname)
+     :letters (apply str (map str subset))
+     :n       n
+     :natural  nat-c
+     :reversed rev-c
+     :greedy-a gr-a-c
+     :greedy-z gr-z-c
+     :greedy-a-path (apply str (map str gr-a))
+     :greedy-z-path (apply str (map str gr-z))
+     :all-pairs pairs-s
+     :ratio    (if (pos? gr-a-c) (double (/ nat-c gr-a-c)) 0.0)
+     :palindrome? (= nat-c rev-c)}))
+
+;; --- printing ---
+
+(defn sep [] (println (apply str (repeat 70 "="))))
+
+(defn print-triangle [dfn label]
+  (let [slacks (vec (for [a letters b letters c letters
+                          :when (and (not= a b) (not= b c) (not= a c))]
+                      (triangle-slack dfn a b c)))
+        total  (count slacks)
+        zeros  (count (filter zero? slacks))
+        mn     (apply min slacks)
+        mx     (apply max slacks)
+        sm     (reduce + 0 slacks)
+        mean   (double (/ sm total))
+        freq   (frequencies slacks)]
+    (println (str "\n--- Triangle Inequality (" label ") ---"))
+    (println (str "  Triples:    " total))
+    (println (str "  Geodesic:   " zeros " (" (format "%.1f" (* 100.0 (/ (double zeros) total))) "%)"))
+    (println (str "  Min slack:  " mn "  Max: " mx "  Mean: " (format "%.4f" mean)))
+    (doseq [s (sort (keys freq))]
+      (let [c   (get freq s)
+            pct (* 100.0 (/ (double c) total))
+            bar (apply str (repeat (max 1 (int (/ pct 2))) "#"))]
+        (println (str "    slack=" s ": " (format "%5d" c)
+                      " (" (format "%5.1f" pct) "%)  " bar))))))
+
+(defn print-results [label results]
+  (println (str "\n--- " label " ---\n"))
+  (println "  Subset              N   Natural  Reverse  GreedyA  GreedyZ  Pairs   Ratio  Palindrome?")
+  (println (str "  " (apply str (repeat 88 "-"))))
+  (doseq [r results]
+    (println (str "  " (format "%-20s" (:name r))
+                  (format "%2d" (:n r))
+                  "  " (format "%7d" (:natural r))
+                  "  " (format "%7d" (:reversed r))
+                  "  " (format "%7d" (:greedy-a r))
+                  "  " (format "%7d" (:greedy-z r))
+                  "  " (format "%5d" (:all-pairs r))
+                  "  " (format "%5.3f" (:ratio r))
+                  "  " (:palindrome? r))))
+  (println "\n  Greedy nearest-neighbor paths:")
+  (doseq [r results]
+    (println (str "    " (:name r) "  →" (:greedy-a-path r)))
+    (println (str "    " (apply str (repeat (count (:name r)) " "))
+                  "  ←" (:greedy-z-path r)))))
+
+(defn print-comparison [br tr]
+  (println)
+  (sep)
+  (println "  PATH INVARIANCE COMPARISON: Binary(5-bit) vs Trits(3-trit)")
+  (sep)
+  (println "\n  Subset           Bin-Nat  Tri-Nat  Bin-Grd  Tri-Grd  B-Ratio  T-Ratio  Winner")
+  (println (str "  " (apply str (repeat 80 "-"))))
+  (doseq [[b t] (map vector br tr)]
+    (let [sn (second (re-find #"/(.+)" (:name b)))
+          w  (cond (< (:ratio t) (:ratio b)) "trits"
+                   (< (:ratio b) (:ratio t)) "binary"
+                   :else "tie")]
+      (println (str "  " (format "%-17s" sn)
+                    " " (format "%7d" (:natural b))
+                    " " (format "%7d" (:natural t))
+                    " " (format "%7d" (:greedy-a b))
+                    " " (format "%7d" (:greedy-a t))
+                    " " (format "%7.3f" (:ratio b))
+                    " " (format "%7.3f" (:ratio t))
+                    "  " w))))
+
+  (println "\n--- Verdict ---")
+  (let [bp (count (filter :palindrome? br))
+        tp (count (filter :palindrome? tr))
+        n  (count br)]
+    (println (str "  Binary palindrome-invariant:  " bp "/" n))
+    (println (str "  Trits  palindrome-invariant:  " tp "/" n)))
+
+  (let [bm (/ (reduce + 0 (map :ratio br)) (count br))
+        tm (/ (reduce + 0 (map :ratio tr)) (count tr))]
+    (println (str "\n  Mean efficiency ratio (natural/greedy):"))
+    (println (str "    Binary: " (format "%.4f" (double bm))))
+    (println (str "    Trits:  " (format "%.4f" (double tm))))
+    (println (str "    → " (if (< tm bm)
+                             "Ternary natural order closer to optimal"
+                             "Binary natural order closer to optimal")))))
+
+;; --- main ---
+
+(defn run []
+  (sep)
+  (println "  world:// hamming a-z — PATH INVARIANCE (basilisp)")
+  (sep)
+
+  (let [bd (make-dist-fn binary-codes)
+        td (make-dist-fn ternary-codes)]
+
+    (print-triangle bd "Binary 5-bit")
+    (print-triangle td "True Trits 3-trit")
+
+    (let [subs [["all-26"      (vec letters)]
+                ["vowels"      (mapv index-letter [0 4 8 14 20])]
+                ["first-5"     (mapv index-letter [0 1 2 3 4])]
+                ["last-5"      (mapv index-letter [21 22 23 24 25])]
+                ["primes"      (mapv index-letter [2 3 5 7 11 13 17 19 23])]
+                ["powers-of-2" (mapv index-letter [1 2 4 8 16])]
+                ["fibonacci"   (vec (distinct (map index-letter [1 1 2 3 5 8 13 21])))]]
+
+          br (mapv (fn [[sn ss]] (analyze-subset bd "bin" sn ss)) subs)
+          tr (mapv (fn [[sn ss]] (analyze-subset td "tri" sn ss)) subs)]
+
+      (print-results "Binary (5-bit)" br)
+      (print-results "True Trits (3-trit)" tr)
+      (print-comparison br tr))))
+
+(run)
